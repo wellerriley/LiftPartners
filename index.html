@@ -102,6 +102,23 @@
   .prop-name { font-weight: 600; }
   .prop-addr { font-size: 11px; color: var(--muted); margin-top: 2px; font-family: 'DM Mono', monospace; }
   .mono { font-family: 'DM Mono', monospace; font-size: 12px; }
+
+  /* DRAG AND DROP */
+  .drop-zone { border: 2px dashed var(--border); border-radius: 8px; padding: 32px; text-align: center; margin-bottom: 20px; cursor: pointer; transition: all 0.2s; background: var(--surface); position: relative; }
+  .drop-zone:hover, .drop-zone.dragover { border-color: var(--accent); background: rgba(139,26,26,0.03); }
+  .drop-zone.dragover { transform: scale(1.01); }
+  .drop-zone-icon { font-size: 32px; margin-bottom: 10px; }
+  .drop-zone-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+  .drop-zone-sub { font-size: 12px; color: var(--muted); font-family: 'DM Mono', monospace; }
+  .drop-zone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+  .drop-zone.processing { border-color: var(--accent); background: rgba(139,26,26,0.03); pointer-events: none; }
+  .drop-zone.processing .drop-zone-icon { animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* AI PREVIEW MODAL */
+  .ai-preview { background: rgba(139,26,26,0.04); border: 1px solid rgba(139,26,26,0.2); border-radius: 6px; padding: 16px; margin-bottom: 16px; }
+  .ai-preview-label { font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--accent); font-family: 'DM Mono', monospace; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  .ai-preview-label::after { content: ''; flex: 1; height: 1px; background: rgba(139,26,26,0.2); }
   .action-btn { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: 4px 10px; border-radius: 3px; font-size: 11px; cursor: pointer; transition: all 0.12s; font-family: 'DM Sans', sans-serif; }
   .action-btn:hover { color: var(--accent); border-color: var(--accent); }
   .del-btn { background: transparent; border: 1px solid transparent; color: var(--muted); padding: 4px 8px; border-radius: 3px; font-size: 11px; cursor: pointer; }
@@ -260,11 +277,20 @@
 
     <!-- ===== LISTINGS ===== -->
     <div class="view" id="view-listings">
+
+      <!-- DRAG AND DROP ZONE -->
+      <div class="drop-zone" id="drop-zone" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)">
+        <input type="file" accept=".pdf,.xlsx,.xls,.csv,.txt" onchange="handleFileSelect(event)"/>
+        <div class="drop-zone-icon" id="drop-icon">📄</div>
+        <div class="drop-zone-title" id="drop-title">Drop a property brochure or flyer here</div>
+        <div class="drop-zone-sub" id="drop-sub">PDF, Excel, CSV — AI will extract and pre-fill the listing form automatically</div>
+      </div>
+
       <div class="table-wrap">
         <div class="table-header">
           <span class="table-title">Industrial Listings</span>
           <span class="table-count" id="listings-count"></span>
-          <div style="margin-left:auto"><button class="btn btn-accent" onclick="openModal('listing')" style="padding:6px 14px;font-size:12px;">+ Add Listing</button></div>
+          <div style="margin-left:auto"><button class="btn btn-accent" onclick="openModal('listing')" style="padding:6px 14px;font-size:12px;">+ Add Listing Manually</button></div>
         </div>
         <div id="listings-wrap"><div class="loading"><div class="spinner"></div> Loading…</div></div>
       </div>
@@ -305,6 +331,10 @@
 
       <!-- LISTING FORM -->
       <div id="form-listing">
+        <div id="ai-preview-banner" class="ai-preview" style="display:none">
+          <div class="ai-preview-label">✦ AI Extracted Data</div>
+          <div style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;">Fields below were auto-filled from your document. Review and edit before saving.</div>
+        </div>
         <div class="form-grid">
           <div class="form-group full"><label class="form-label">Property Name *</label><input class="form-input" id="l-name" placeholder="Meridian Logistics Park — Unit D"/></div>
           <div class="form-group full">
@@ -677,6 +707,7 @@ function openModal(type='listing') {
   ['listing','tenant','deal'].forEach(f=>document.getElementById('form-'+f).style.display=f===type?'block':'none');
   document.getElementById('modal-title').textContent = {listing:'NEW LISTING',tenant:'NEW TENANT / LEASE',deal:'NEW DEAL'}[type];
   document.getElementById('form-'+type).querySelectorAll('input').forEach(i=>i.value='');
+  if (type === 'listing') document.getElementById('ai-preview-banner').style.display = 'none';
   document.getElementById('modal-backdrop').classList.add('open');
 }
 function closeModal() { document.getElementById('modal-backdrop').classList.remove('open'); }
@@ -716,6 +747,159 @@ async function saveRecord() {
     showToast('Save failed: '+(e.message||'Unknown error'),'error');
   }
   btn.textContent='Save Record'; btn.disabled=false;
+}
+
+// ── AI FILE SCRAPER ──────────────────────────────────────
+function handleDragOver(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.add('dragover');
+}
+function handleDragLeave(e) {
+  document.getElementById('drop-zone').classList.remove('dragover');
+}
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) processFile(file);
+}
+function handleFileSelect(e) {
+  const file = e.target.files[0];
+  if (file) processFile(file);
+}
+
+async function processFile(file) {
+  const zone = document.getElementById('drop-zone');
+  const icon = document.getElementById('drop-icon');
+  const title = document.getElementById('drop-title');
+  const sub = document.getElementById('drop-sub');
+
+  // Validate type
+  const allowed = ['application/pdf','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/vnd.ms-excel','text/csv','text/plain'];
+  const isPDF = file.type === 'application/pdf';
+  const isCSV = file.type === 'text/csv' || file.name.endsWith('.csv');
+  const isText = file.type === 'text/plain' || file.name.endsWith('.txt');
+  const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
+
+  if (!isPDF && !isCSV && !isText && !isExcel) {
+    showToast('Please drop a PDF, Excel, or CSV file', 'error'); return;
+  }
+
+  zone.classList.add('processing');
+  icon.textContent = '⏳';
+  title.textContent = 'Reading ' + file.name + '…';
+  sub.textContent = 'AI is extracting property details — this takes a few seconds';
+
+  try {
+    let content = '';
+    let messages = [];
+
+    if (isPDF) {
+      // Read as base64 for Claude vision
+      const base64 = await fileToBase64(file);
+      messages = [{
+        role: 'user',
+        content: [
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+          { type: 'text', text: EXTRACTION_PROMPT }
+        ]
+      }];
+    } else {
+      // Read as text for CSV/Excel/TXT
+      content = await fileToText(file);
+      messages = [{
+        role: 'user',
+        content: EXTRACTION_PROMPT + '\n\nDocument content:\n' + content.substring(0, 8000)
+      }];
+    }
+
+    icon.textContent = '🤖';
+    title.textContent = 'AI is extracting property data…';
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        messages
+      })
+    });
+
+    const result = await response.json();
+    const text = result.content?.map(b => b.text||'').join('') || '';
+
+    // Strip JSON fences
+    const clean = text.replace(/```json|```/g,'').trim();
+    const extracted = JSON.parse(clean);
+
+    // Populate the modal form with extracted data
+    populateListingForm(extracted);
+
+    zone.classList.remove('processing');
+    icon.textContent = '✅';
+    title.textContent = 'Data extracted! Review and save below.';
+    sub.textContent = file.name + ' · ' + Object.keys(extracted).filter(k=>extracted[k]).length + ' fields populated';
+
+  } catch(e) {
+    zone.classList.remove('processing');
+    icon.textContent = '❌';
+    title.textContent = 'Extraction failed — try again or add manually';
+    sub.textContent = e.message || 'Unknown error';
+    showToast('AI extraction failed: ' + (e.message||'Unknown error'), 'error');
+  }
+}
+
+const EXTRACTION_PROMPT = `You are a commercial real estate data extraction assistant. Extract property listing information from this document and return ONLY a valid JSON object with no other text or markdown. Use exactly these keys:
+
+{
+  "name": "property name or building name",
+  "full_address": "full street address including city, state, zip",
+  "city": "city, state only e.g. Chicago, IL",
+  "sf": "total square footage as a number only e.g. 250000",
+  "type": "one of: Bulk Distribution, Light Industrial, Flex, Cold Storage, Manufacturing, Cross-Dock",
+  "rate": "asking rent per SF per year as number only e.g. 5.50",
+  "height": "clear height in feet as number only e.g. 36",
+  "docks": "number of dock doors as integer only",
+  "status": "one of: available, loi, leased, new, offmarket",
+  "notes": "any other notable features like sprinklers, power, rail access, truck court depth"
+}
+
+If a field is not found in the document, use null. Return ONLY the JSON object.`;
+
+function populateListingForm(data) {
+  const set = (id, val) => { if (val !== null && val !== undefined && val !== '') { const el = document.getElementById(id); if (el) el.value = val; } };
+  set('l-name', data.name);
+  set('l-address', data.full_address);
+  set('l-city', data.city);
+  set('l-sf', data.sf);
+  set('l-rate', data.rate);
+  set('l-height', data.height);
+  set('l-docks', data.docks);
+  set('l-notes', data.notes);
+  if (data.type) { const sel = document.getElementById('l-type'); if (sel) { for (let o of sel.options) { if (o.value.toLowerCase().includes(data.type.toLowerCase()) || data.type.toLowerCase().includes(o.value.toLowerCase())) { sel.value = o.value; break; } } } }
+  if (data.status) { const sel = document.getElementById('l-status'); if (sel && statusMap[data.status]) sel.value = data.status; }
+  // Show AI banner and open modal
+  document.getElementById('ai-preview-banner').style.display = 'block';
+  openModal('listing');
+}
+
+function fileToBase64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(',')[1]);
+    r.onerror = () => rej(new Error('File read failed'));
+    r.readAsDataURL(file);
+  });
+}
+
+function fileToText(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = () => rej(new Error('File read failed'));
+    r.readAsText(file);
+  });
 }
 
 // ── INIT ─────────────────────────────────────────────────
