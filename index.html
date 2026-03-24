@@ -180,6 +180,10 @@
   .empty-state { padding: 48px; text-align: center; color: var(--muted); font-family: 'DM Mono', monospace; font-size: 13px; }
 
   /* LEAFLET CUSTOM POPUP */
+  .map-toggle { display: flex; background: var(--surface2); border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }
+  .map-toggle-btn { padding: 5px 12px; font-size: 11px; font-weight: 600; font-family: 'DM Mono', monospace; cursor: pointer; border: none; background: transparent; color: var(--muted); transition: all 0.15s; letter-spacing: 0.5px; }
+  .map-toggle-btn:hover { color: var(--text); }
+  .map-toggle-btn.active { background: var(--accent); color: #fff; }
   .leaflet-popup-content-wrapper { border-radius: 6px; border: 1px solid var(--border); box-shadow: 0 4px 20px rgba(0,0,0,0.12); padding: 0; overflow: hidden; }
   .leaflet-popup-content { margin: 0; }
   .map-popup { padding: 14px 16px; min-width: 200px; }
@@ -285,11 +289,17 @@
       <div class="map-panel" style="margin-bottom:0">
         <div class="map-panel-head">
           <span class="map-panel-title">Property Map</span>
-          <div class="map-legend">
-            <div class="legend-item"><div class="legend-dot" style="background:#2d7a4f"></div>Available</div>
-            <div class="legend-item"><div class="legend-dot" style="background:#8b1a1a"></div>Under LOI</div>
-            <div class="legend-item"><div class="legend-dot" style="background:#9a8880"></div>Leased</div>
-            <div class="legend-item"><div class="legend-dot" style="background:#1a5a8b"></div>New</div>
+          <div style="display:flex;align-items:center;gap:16px;">
+            <div class="map-toggle">
+              <button class="map-toggle-btn active" id="toggle-default" onclick="setMapLayer('default')">🗺 Default</button>
+              <button class="map-toggle-btn" id="toggle-satellite" onclick="setMapLayer('satellite')">🛰 Satellite</button>
+            </div>
+            <div class="map-legend">
+              <div class="legend-item"><div class="legend-dot" style="background:#2d7a4f"></div>Available</div>
+              <div class="legend-item"><div class="legend-dot" style="background:#8b1a1a"></div>Under LOI</div>
+              <div class="legend-item"><div class="legend-dot" style="background:#9a8880"></div>Leased</div>
+              <div class="legend-item"><div class="legend-dot" style="background:#1a5a8b"></div>New</div>
+            </div>
           </div>
         </div>
         <div id="property-map" style="height:calc(100vh - 180px);width:100%"></div>
@@ -451,13 +461,42 @@ function showToast(msg, type='success') {
 }
 
 // ── MAP INIT ─────────────────────────────────────────────
+let tileDefault = null, tileSatellite = null, currentLayer = 'default';
+
 function initMap() {
   if (map) return;
   map = L.map('property-map', { zoomControl: true, scrollWheelZoom: true }).setView([39.5, -98.35], 4);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+
+  tileDefault = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
     attribution: '© OpenStreetMap contributors © CARTO',
     maxZoom: 19
-  }).addTo(map);
+  });
+
+  tileSatellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: '© Esri, Maxar, Earthstar Geographics',
+    maxZoom: 19
+  });
+
+  tileDefault.addTo(map);
+  currentLayer = 'default';
+}
+
+function setMapLayer(type) {
+  if (!map) return;
+  if (type === currentLayer) return;
+  if (type === 'satellite') {
+    map.removeLayer(tileDefault);
+    tileSatellite.addTo(map);
+    // bring markers to front
+    markers.forEach(m => m.bringToFront());
+  } else {
+    map.removeLayer(tileSatellite);
+    tileDefault.addTo(map);
+    markers.forEach(m => m.bringToFront());
+  }
+  currentLayer = type;
+  document.getElementById('toggle-default').classList.toggle('active', type === 'default');
+  document.getElementById('toggle-satellite').classList.toggle('active', type === 'satellite');
 }
 
 function makeIcon(color) {
